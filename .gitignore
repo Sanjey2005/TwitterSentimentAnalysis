@@ -41,15 +41,16 @@ Thumbs.db
 *.tmp
 *.bak
 
-# Large data files - excluded for GitHub (too large >100MB)
-data/processed/X_tfidf_train.npy
-data/processed/X_tfidf_test.npy
-data/processed/X_w2v_train.npy
-data/processed/X_w2v_test.npy
-sentiment140.csv
+# Large data files - Using Git LFS for files >100MB
+# These files are tracked with Git LFS and will be included
+# data/processed/X_tfidf_train.npy (tracked with LFS)
+# data/processed/X_tfidf_test.npy (tracked with LFS)
+# data/processed/X_w2v_train.npy (tracked with LFS)
+# data/processed/X_w2v_test.npy (tracked with LFS)
+# sentiment140.csv (tracked with LFS)
 
-# Large model files - excluded if too large
-models/saved_models/logistic_regression_mitigated.pkl
+# Large model files - Using Git LFS
+# models/saved_models/logistic_regression_mitigated.pkl (tracked with LFS)
 
 # Word documents (usually not needed in repo)
 *.docx
