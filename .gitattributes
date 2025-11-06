@@ -1,3 +1,5 @@
 *.npy filter=lfs diff=lfs merge=lfs -text
 *.csv filter=lfs diff=lfs merge=lfs -text
 models/saved_models/logistic_regression_mitigated.pkl filter=lfs diff=lfs merge=lfs -text
+data/processed/*.npy filter=lfs diff=lfs merge=lfs -text
+sentiment140.csv filter=lfs diff=lfs merge=lfs -text
