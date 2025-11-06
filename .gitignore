@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# Large data files - excluded for GitHub (too large >100MB)
+data/processed/X_tfidf_train.npy
+data/processed/X_tfidf_test.npy
+data/processed/X_w2v_train.npy
+data/processed/X_w2v_test.npy
+sentiment140.csv
+
+# Large model files - excluded if too large
+models/saved_models/logistic_regression_mitigated.pkl
+
+# Word documents (usually not needed in repo)
+*.docx
+
+# Cache directories
+*.cache/
+.pytest_cache/
+
