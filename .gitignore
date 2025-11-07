@@ -41,16 +41,35 @@ Thumbs.db
 *.tmp
 *.bak
 
-# Large data files - Using Git LFS for files >100MB
-# These files are tracked with Git LFS and will be included
-# data/processed/X_tfidf_train.npy (tracked with LFS)
-# data/processed/X_tfidf_test.npy (tracked with LFS)
-# data/processed/X_w2v_train.npy (tracked with LFS)
-# data/processed/X_w2v_test.npy (tracked with LFS)
-# sentiment140.csv (tracked with LFS)
+# Large data files - excluded (not needed for Streamlit deployment)
+data/processed/X_tfidf_train.npy
+data/processed/X_tfidf_test.npy
+data/processed/X_w2v_train.npy
+data/processed/X_w2v_test.npy
+data/processed/y_train.npy
+data/processed/y_test.npy
+data/processed/text_train.pkl
+data/processed/text_test.pkl
+sentiment140.csv
 
-# Large model files - Using Git LFS
-# models/saved_models/logistic_regression_mitigated.pkl (tracked with LFS)
+# Development files - excluded (not needed for Streamlit deployment)
+notebooks/
+reports/
+setup_venv.bat
+setup_venv.ps1
+run_app.bat
+run_app.sh
+run_app_with_check.bat
+
+# Unused model files - excluded (not needed for Streamlit deployment)
+models/saved_models/logistic_regression_mitigated.pkl
+models/saved_models/robust_logistic_regression.pkl
+models/saved_models/word2vec_model.model
+
+# Documentation files - excluded (keeping only essential ones)
+CURSOR_NOTEBOOK_GUIDE.md
+QUICK_START.md
+TROUBLESHOOTING.md
 
 # Word documents (usually not needed in repo)
 *.docx
