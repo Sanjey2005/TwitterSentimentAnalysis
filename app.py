@@ -1,7 +1,6 @@
 """
 Twitter Sentiment Analysis - Streamlit Web Application
-
-A comprehensive Streamlit frontend for the Twitter Sentiment Analysis project.
+A simple and informative interface for Twitter sentiment analysis
 """
 
 import streamlit as st
@@ -10,11 +9,12 @@ import numpy as np
 import pickle
 import joblib
 import os
+import matplotlib.pyplot as plt
 from pathlib import Path
+import torch
 
 # Import project modules
 from src.preprocessing import TwitterTextPreprocessor
-from src.models import predict_sentiment
 
 # Page configuration
 st.set_page_config(
@@ -24,64 +24,51 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better styling
+# Custom CSS
 st.markdown("""
     <style>
     .main-header {
-        font-size: 3rem;
+        font-size: 2.5rem;
         font-weight: bold;
         color: #1DA1F2;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 1rem;
     }
-    .model-card {
+    .feature-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        color: white;
+        margin: 1rem 0;
+    }
+    .info-box {
         background-color: #f0f2f6;
         padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-        color: #1f1f1f;
-    }
-    .model-card h3 {
-        color: #1DA1F2;
-        margin-top: 0;
-    }
-    .model-card h4 {
-        color: #333333;
-        margin-top: 1rem;
-    }
-    .model-card p {
-        color: #1f1f1f;
-    }
-    .model-card ul {
-        color: #1f1f1f;
-    }
-    .model-card li {
-        color: #1f1f1f;
-    }
-    .model-card strong {
-        color: #1DA1F2;
-    }
-    .prediction-box {
-        background-color: #e8f5e9;
-        padding: 1.5rem;
-        border-radius: 10px;
-        border-left: 5px solid #4caf50;
-    }
-    .metric-box {
-        background-color: #fff;
-        padding: 1rem;
         border-radius: 8px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        border-left: 4px solid #1DA1F2;
+        margin: 1rem 0;
+        color: #1f1f1f !important;
+    }
+    .info-box h3 {
+        color: #1DA1F2 !important;
+        margin-top: 0;
+        margin-bottom: 0.5rem;
+    }
+    .info-box p {
+        color: #1f1f1f !important;
+        margin: 0.5rem 0;
+    }
+    .info-box strong {
+        color: #1DA1F2 !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# Load models and resources
+# Load models
 @st.cache_resource
 def load_models():
     """Load all saved models and resources"""
     models_dir = Path("models/saved_models")
-    
     loaded_models = {}
     
     try:
@@ -94,38 +81,26 @@ def load_models():
         if (models_dir / "scaler.pkl").exists():
             loaded_models['scaler'] = joblib.load(models_dir / "scaler.pkl")
         
-        # Load Logistic Regression
-        if (models_dir / "logistic_regression_model.pkl").exists():
-            loaded_models['logistic_regression'] = joblib.load(
-                models_dir / "logistic_regression_model.pkl"
-            )
+        # Load ML models
+        model_files = {
+            'logistic_regression': 'logistic_regression_model.pkl',
+            'naive_bayes': 'naive_bayes_model.pkl',
+            'mlp': 'mlp_model.pkl'
+        }
         
-        # Load Random Forest
-        if (models_dir / "random_forest_model.pkl").exists():
-            loaded_models['random_forest'] = joblib.load(
-                models_dir / "random_forest_model.pkl"
-            )
+        for key, filename in model_files.items():
+            if (models_dir / filename).exists():
+                loaded_models[key] = joblib.load(models_dir / filename)
         
-        # Load Ensemble
-        if (models_dir / "ensemble_model.pkl").exists():
-            loaded_models['ensemble'] = joblib.load(
-                models_dir / "ensemble_model.pkl"
-            )
-        
-        # Load LSTM model (Keras/TensorFlow model)
-        if (models_dir / "lstm_model.h5").exists():
+        # Load BERT model
+        bert_model_path = models_dir / "bert_model"
+        if bert_model_path.exists() and (bert_model_path / "config.json").exists():
             try:
-                import tensorflow as tf
-                loaded_models['lstm'] = tf.keras.models.load_model(
-                    models_dir / "lstm_model.h5"
-                )
-                # Load LSTM tokenizer if available
-                if (models_dir / "lstm_tokenizer.pkl").exists():
-                    with open(models_dir / "lstm_tokenizer.pkl", "rb") as f:
-                        loaded_models['lstm_tokenizer'] = pickle.load(f)
-            except Exception as lstm_error:
-                # If LSTM fails to load, continue without it
-                st.warning(f"Could not load LSTM model: {str(lstm_error)}")
+                from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
+                loaded_models['bert_tokenizer'] = DistilBertTokenizer.from_pretrained(str(bert_model_path))
+                loaded_models['bert'] = DistilBertForSequenceClassification.from_pretrained(str(bert_model_path))
+            except Exception as e:
+                st.warning(f"Could not load BERT: {str(e)}")
         
         # Load preprocessor
         loaded_models['preprocessor'] = TwitterTextPreprocessor()
@@ -136,6 +111,47 @@ def load_models():
     
     return loaded_models
 
+# Prediction functions
+def predict_with_bert(text, tokenizer, model):
+    """Predict sentiment using BERT model"""
+    model.eval()
+    encoded = tokenizer.encode_plus(
+        text,
+        add_special_tokens=True,
+        max_length=128,
+        padding='max_length',
+        truncation=True,
+        return_attention_mask=True,
+        return_tensors='pt'
+    )
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    input_ids = encoded['input_ids'].to(device)
+    attention_mask = encoded['attention_mask'].to(device)
+    model = model.to(device)
+    
+    with torch.no_grad():
+        outputs = model(input_ids, attention_mask=attention_mask)
+        logits = outputs.logits
+        probs = torch.softmax(logits, dim=1)
+    
+    prediction = torch.argmax(logits, dim=1).item()
+    probability = probs[0].cpu().numpy()
+    return prediction, probability
+
+def predict_with_ml(text, model, vectorizer, scaler=None):
+    """Predict sentiment using ML models (LR, NB, MLP)"""
+    preprocessed = models['preprocessor'].preprocess_pipeline(text)
+    text_vector = vectorizer.transform([preprocessed])
+    
+    if scaler and model.__class__.__name__ in ['LogisticRegression', 'MLPClassifier']:
+        text_vector = scaler.transform(text_vector.toarray())
+    else:
+        text_vector = text_vector.toarray()
+    
+    prediction = model.predict(text_vector)[0]
+    probability = model.predict_proba(text_vector)[0]
+    return prediction, probability, preprocessed
+
 # Initialize models
 models = load_models()
 
@@ -143,496 +159,479 @@ models = load_models()
 st.markdown('<h1 class="main-header">📊 Twitter Sentiment Analysis</h1>', unsafe_allow_html=True)
 
 # Sidebar navigation
-st.sidebar.title("Navigation")
+st.sidebar.title("📱 Navigation")
 page = st.sidebar.radio(
     "Choose a section:",
-    ["🏠 Home", "🤖 Model Information", "🔮 Predict Sentiment", "📈 Project Capabilities"]
+    ["🏠 Home", "🔮 Predict", "🤖 Models", "🔍 Explain"]
 )
 
 # Home Page
 if page == "🏠 Home":
     st.markdown("""
-    ## Welcome to Twitter Sentiment Analysis System
+    ## Welcome! 👋
     
-    This is a comprehensive machine learning system for analyzing Twitter sentiment with state-of-the-art models,
-    fairness analysis, and adversarial robustness testing.
-    
-    ### 🎯 What This Project Does
-    
-    This project provides an end-to-end solution for Twitter sentiment analysis, including:
-    
-    - **Multiple ML Models**: Logistic Regression, Random Forest, LSTM, and Ensemble models
-    - **Fairness Analysis**: Comprehensive bias detection and mitigation
-    - **Adversarial Robustness**: Security testing and defense mechanisms
-    - **Production Ready**: Modular code with comprehensive documentation
-    - **Ethical AI**: GDPR/CCPA compliance and privacy considerations
-    
-    ### 📊 Performance Highlights
-    
-    - **F1-Score**: > 85% (BERT achieved ~91%)
-    - **ROC-AUC**: > 90% (BERT achieved ~97%)
-    - **Fairness Metrics**: Disparate Impact Ratio < 1.2
-    - **Adversarial Accuracy**: > 75%
-    
-    ### 🚀 Quick Start
-    
-    1. Navigate to **"Predict Sentiment"** to analyze your own text
-    2. Check **"Model Information"** to see available models and their performance
-    3. Explore **"Project Capabilities"** to learn about all features
-    
-    ---
+    A comprehensive **Twitter Sentiment Analysis** system powered by machine learning.
+    Analyze text sentiment with multiple models and understand how predictions are made.
     """)
     
-    # Show model loading status
-    if models:
-        st.success("✅ All models loaded successfully!")
-        st.info("🎯 Ready to make predictions!")
-    else:
-        st.warning("⚠️ Models not loaded. Please check model files.")
+    # Project features
+    col1, col2, col3 = st.columns(3)
     
-    # Dataset information
-    with st.expander("📚 Dataset Information"):
+    with col1:
+        st.markdown("""
+        <div class="feature-box">
+            <h3>🤖 4 ML Models</h3>
+            <p>Logistic Regression, Naive Bayes, MLP, and BERT (DistilBERT)</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("""
+        <div class="feature-box">
+            <h3>🔍 Explainable AI</h3>
+            <p>SHAP-based feature importance and prediction explanations</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown("""
+        <div class="feature-box">
+            <h3>📊 High Accuracy</h3>
+            <p>BERT achieves >85% F1-score and >90% ROC-AUC</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Quick info
+    st.subheader("📋 What This Project Offers")
+    
+    features = [
+        "**Text Preprocessing**: Twitter-specific cleaning (hashtags, mentions, URLs, emojis)",
+        "**Multiple Models**: Choose from 4 different ML models for prediction",
+        "**Model Explainability**: Understand predictions with SHAP values and feature importance",
+        "**Production Ready**: Clean, modular code with comprehensive documentation",
+        "**Batch Processing**: Analyze single texts or upload CSV files",
+        "**Visual Analytics**: Interactive charts and visualizations"
+    ]
+    
+    for feature in features:
+        st.markdown(f"✅ {feature}")
+    
+    # Model status
+    st.markdown("---")
+    st.subheader("📦 Model Status")
+    
+    if models:
+        available_models = []
+        if 'logistic_regression' in models:
+            available_models.append("✅ Logistic Regression")
+        if 'naive_bayes' in models:
+            available_models.append("✅ Naive Bayes")
+        if 'mlp' in models:
+            available_models.append("✅ MLP")
+        if 'bert' in models:
+            available_models.append("✅ BERT (DistilBERT)")
+        
+        if available_models:
+            for model in available_models:
+                st.markdown(f"- {model}")
+        else:
+            st.warning("⚠️ No models loaded. Please train models first.")
+    else:
+        st.error("❌ Models not loaded. Please check model files.")
+    
+    # Dataset info
+    with st.expander("📚 About the Dataset"):
         st.markdown("""
         **Sentiment140 Dataset**
         - **Size**: 1.6 million tweets
         - **Labels**: Binary sentiment (0=negative, 4=positive)
-        - **Time Period**: 2009 tweets from various sources
-        - **Balance**: Approximately 50/50 positive/negative distribution
+        - **Time Period**: 2009 tweets
+        - **Balance**: ~50/50 positive/negative distribution
         """)
 
-# Model Information Page
-elif page == "🤖 Model Information":
-    st.header("🤖 Available Models")
-    
-    if not models:
-        st.error("Models not loaded. Please check model files.")
-    else:
-        # Model cards
-        model_info = [
-            {
-                "name": "Logistic Regression",
-                "description": "Linear baseline model with interpretability",
-                "metrics": {"F1-Score": "~0.85", "ROC-AUC": "~0.92", "Accuracy": "~85%"},
-                "available": "logistic_regression" in models
-            },
-            {
-                "name": "Random Forest",
-                "description": "Non-linear patterns with feature importance",
-                "metrics": {"F1-Score": "~0.87", "ROC-AUC": "~0.94", "Accuracy": "~87%"},
-                "available": "random_forest" in models
-            },
-            {
-                "name": "Ensemble Model",
-                "description": "Voting classifier combining multiple models for robustness",
-                "metrics": {"F1-Score": "~0.88", "ROC-AUC": "~0.95", "Accuracy": "~88%"},
-                "available": "ensemble" in models
-            },
-            {
-                "name": "LSTM",
-                "description": "Deep learning model with sequential understanding",
-                "metrics": {"F1-Score": "~0.88", "ROC-AUC": "~0.95", "Accuracy": "~88%"},
-                "available": "lstm" in models
-            }
-        ]
-        
-        cols = st.columns(2)
-        for idx, model in enumerate(model_info):
-            with cols[idx % 2]:
-                st.markdown(f"""
-                <div class="model-card">
-                    <h3>{model['name']}</h3>
-                    <p>{model['description']}</p>
-                    <hr>
-                    <h4>Performance Metrics:</h4>
-                    <ul>
-                        <li>F1-Score: <strong>{model['metrics']['F1-Score']}</strong></li>
-                        <li>ROC-AUC: <strong>{model['metrics']['ROC-AUC']}</strong></li>
-                        <li>Accuracy: <strong>{model['metrics']['Accuracy']}</strong></li>
-                    </ul>
-                    <p><strong>Status:</strong> {'✅ Available' if model['available'] else '⚠️ Not Available'}</p>
-                </div>
-                """, unsafe_allow_html=True)
-        
-        # Model comparison table
-        st.subheader("📊 Model Comparison")
-        comparison_data = {
-            "Model": ["Logistic Regression", "Random Forest", "Ensemble", "LSTM"],
-            "F1-Score": [0.85, 0.87, 0.88, 0.88],
-            "ROC-AUC": [0.92, 0.94, 0.95, 0.95],
-            "Accuracy": [0.85, 0.87, 0.88, 0.88],
-            "Interpretability": ["High", "Medium", "Medium", "Low"],
-            "Training Time": ["Fast", "Medium", "Medium", "Slow"]
-        }
-        df_comparison = pd.DataFrame(comparison_data)
-        st.dataframe(df_comparison, use_container_width=True)
-
 # Predict Sentiment Page
-elif page == "🔮 Predict Sentiment":
+elif page == "🔮 Predict":
     st.header("🔮 Predict Sentiment")
     
     if not models:
         st.error("❌ Models not loaded. Please check model files.")
     else:
         # Input section
-        st.subheader("📝 Enter Text to Analyze")
-        
-        # Text input options
         input_method = st.radio(
-            "Choose input method:",
-            ["📝 Type your text", "📄 Upload a file (CSV with 'text' column)"]
+            "Input method:",
+            ["📝 Type text", "📄 Upload CSV"]
         )
         
         text_input = None
         
-        if input_method == "📝 Type your text":
-            # Text area for input
+        if input_method == "📝 Type text":
             user_input = st.text_area(
-                "Enter your text here (e.g., tweet, review, comment):",
+                "Enter text to analyze:",
                 height=150,
-                placeholder="Example: I love this product! It's amazing and works perfectly!"
+                placeholder="Example: I love this product! It's amazing!"
             )
-            
             if user_input:
                 text_input = user_input
         
-        else:  # File upload
-            uploaded_file = st.file_uploader(
-                "Upload a CSV file with a 'text' column",
-                type=['csv']
-            )
-            
+        else:
+            uploaded_file = st.file_uploader("Upload CSV with 'text' column", type=['csv'])
             if uploaded_file:
                 try:
-                    df_upload = pd.read_csv(uploaded_file)
-                    if 'text' in df_upload.columns:
-                        st.success(f"✅ File loaded successfully! Found {len(df_upload)} rows.")
-                        text_input = df_upload['text'].tolist()
+                    df = pd.read_csv(uploaded_file)
+                    if 'text' in df.columns:
+                        st.success(f"✅ Loaded {len(df)} rows")
+                        text_input = df['text'].tolist()
                     else:
-                        st.error("❌ CSV file must have a 'text' column.")
+                        st.error("❌ CSV must have 'text' column")
                 except Exception as e:
-                    st.error(f"❌ Error reading file: {str(e)}")
+                    st.error(f"❌ Error: {str(e)}")
         
         # Model selection
-        st.subheader("🤖 Select Model")
         available_models = []
+        model_map = {}
         if "logistic_regression" in models:
             available_models.append("Logistic Regression")
-        if "random_forest" in models:
-            available_models.append("Random Forest")
-        if "ensemble" in models:
-            available_models.append("Ensemble")
-        if "lstm" in models:
-            available_models.append("LSTM")
+            model_map["Logistic Regression"] = "logistic_regression"
+        if "naive_bayes" in models:
+            available_models.append("Naive Bayes")
+            model_map["Naive Bayes"] = "naive_bayes"
+        if "mlp" in models:
+            available_models.append("MLP")
+            model_map["MLP"] = "mlp"
+        if "bert" in models:
+            available_models.append("BERT")
+            model_map["BERT"] = "bert"
         
         if not available_models:
-            st.warning("⚠️ No models available for prediction.")
+            st.warning("⚠️ No models available")
         else:
-            selected_model_name = st.selectbox(
-                "Choose a model:",
-                available_models
-            )
-            
-            # Map model names to keys
-            model_map = {
-                "Logistic Regression": "logistic_regression",
-                "Random Forest": "random_forest",
-                "Ensemble": "ensemble",
-                "LSTM": "lstm"
-            }
+            selected_model_name = st.selectbox("Select model:", available_models)
             selected_model_key = model_map[selected_model_name]
-            selected_model = models[selected_model_key]
             
-            # Show note for LSTM
-            if selected_model_key == "lstm":
-                st.info("ℹ️ LSTM model requires sequence tokenization. Note: This may require additional preprocessing compared to other models.")
+            if selected_model_key == "bert":
+                st.info("ℹ️ BERT uses transformer architecture. May be slower but more accurate.")
             
             # Predict button
-            if st.button("🚀 Predict Sentiment", type="primary"):
+            if st.button("🚀 Predict", type="primary"):
                 if text_input:
-                    with st.spinner("🔄 Processing..."):
+                    with st.spinner("Processing..."):
                         try:
-                            # Handle single text or list of texts
-                            if isinstance(text_input, str):
-                                texts = [text_input]
-                            else:
-                                texts = text_input
-                            
+                            texts = [text_input] if isinstance(text_input, str) else text_input
                             results = []
                             
                             for text in texts:
-                                # Preprocess text
-                                preprocessed = models['preprocessor'].preprocess_pipeline(text)
-                                
-                                # Handle LSTM model differently (uses tokenization instead of TF-IDF)
-                                if selected_model_key == "lstm":
-                                    if "lstm_tokenizer" not in models:
-                                        st.error("❌ LSTM tokenizer not found. Cannot make predictions with LSTM model.")
-                                        break
-                                    
-                                    import tensorflow as tf
-                                    from tensorflow.keras.preprocessing.sequence import pad_sequences
-                                    
-                                    # Tokenize and pad sequence
-                                    tokenizer = models['lstm_tokenizer']
-                                    sequence = tokenizer.texts_to_sequences([preprocessed])
-                                    
-                                    # Get max_length from model input shape (default to 80 if not available)
-                                    try:
-                                        max_length = selected_model.input_shape[1]
-                                    except:
-                                        max_length = 80  # Default from notebook
-                                    
-                                    padded_sequence = pad_sequences(sequence, maxlen=max_length, padding='post', truncating='post')
-                                    
-                                    # Make prediction
-                                    prediction_proba = selected_model.predict(padded_sequence, verbose=0)[0]
-                                    prediction = 1 if prediction_proba[0] > 0.5 else 0
-                                    
-                                    sentiment = 'Positive' if prediction == 1 else 'Negative'
-                                    confidence = float(prediction_proba[0]) if prediction == 1 else float(1 - prediction_proba[0])
-                                    prob_negative = float(1 - prediction_proba[0])
-                                    prob_positive = float(prediction_proba[0])
-                                    
-                                    results.append({
-                                        'text': text,
-                                        'preprocessed': preprocessed,
-                                        'sentiment': sentiment,
-                                        'confidence': confidence,
-                                        'probability_negative': prob_negative,
-                                        'probability_positive': prob_positive
-                                    })
-                                
+                                if selected_model_key == "bert":
+                                    prediction, probability = predict_with_bert(
+                                        models['preprocessor'].preprocess_pipeline(text),
+                                        models['bert_tokenizer'],
+                                        models['bert']
+                                    )
+                                    preprocessed = models['preprocessor'].preprocess_pipeline(text)
                                 else:
-                                    # Handle TF-IDF based models (Logistic Regression, Random Forest, Ensemble)
-                                    if models['tfidf_vectorizer']:
-                                        text_vectorized = models['tfidf_vectorizer'].transform([preprocessed])
-                                        
-                                        # Scale if scaler is available and model is Logistic Regression
-                                        if selected_model_key == "logistic_regression" and "scaler" in models:
-                                            # Convert sparse matrix to dense for scaling
-                                            text_vectorized_dense = text_vectorized.toarray()
-                                            text_vectorized = models['scaler'].transform(text_vectorized_dense)
-                                        else:
-                                            # For Random Forest and Ensemble, convert to dense array for compatibility
-                                            text_vectorized = text_vectorized.toarray()
-                                        
-                                        # Make prediction
-                                        prediction = selected_model.predict(text_vectorized)[0]
-                                        probability = selected_model.predict_proba(text_vectorized)[0]
-                                        
-                                        sentiment = 'Positive' if prediction == 1 else 'Negative'
-                                        confidence = max(probability)
-                                        
-                                        results.append({
-                                            'text': text,
-                                            'preprocessed': preprocessed,
-                                            'sentiment': sentiment,
-                                            'confidence': confidence,
-                                            'probability_negative': probability[0],
-                                            'probability_positive': probability[1]
-                                        })
+                                    prediction, probability, preprocessed = predict_with_ml(
+                                        text,
+                                        models[selected_model_key],
+                                        models['tfidf_vectorizer'],
+                                        models.get('scaler')
+                                    )
+                                
+                                sentiment = 'Positive' if prediction == 1 else 'Negative'
+                                confidence = max(probability)
+                                
+                                results.append({
+                                    'text': text,
+                                    'sentiment': sentiment,
+                                    'confidence': confidence,
+                                    'prob_positive': probability[1],
+                                    'prob_negative': probability[0]
+                                })
                             
                             # Display results
-                            st.subheader("📊 Prediction Results")
+                            st.subheader("📊 Results")
                             
                             if len(results) == 1:
-                                # Single result display
-                                result = results[0]
-                                
-                                # Sentiment indicator
-                                col1, col2, col3 = st.columns([1, 2, 1])
-                                
-                                with col2:
-                                    if result['sentiment'] == 'Positive':
-                                        st.markdown(f"""
-                                        <div class="prediction-box">
-                                            <h2 style="color: #4caf50; text-align: center;">
-                                                😊 {result['sentiment']} Sentiment
-                                            </h2>
-                                            <p style="text-align: center; font-size: 1.2rem;">
-                                                Confidence: <strong>{result['confidence']:.1%}</strong>
-                                            </p>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                                    else:
-                                        st.markdown(f"""
-                                        <div class="prediction-box" style="background-color: #ffebee; border-left-color: #f44336;">
-                                            <h2 style="color: #f44336; text-align: center;">
-                                                😞 {result['sentiment']} Sentiment
-                                            </h2>
-                                            <p style="text-align: center; font-size: 1.2rem;">
-                                                Confidence: <strong>{result['confidence']:.1%}</strong>
-                                            </p>
-                                        </div>
-                                        """, unsafe_allow_html=True)
-                                
-                                # Metrics
+                                r = results[0]
                                 col1, col2 = st.columns(2)
                                 
                                 with col1:
-                                    st.metric("Probability (Positive)", f"{result['probability_positive']:.1%}")
-                                
+                                    st.metric("Sentiment", r['sentiment'], 
+                                            f"{r['confidence']:.1%} confidence")
                                 with col2:
-                                    st.metric("Probability (Negative)", f"{result['probability_negative']:.1%}")
+                                    st.metric("Positive Prob", f"{r['prob_positive']:.1%}")
                                 
-                                # Original and preprocessed text
+                                # Visual
+                                fig, ax = plt.subplots(figsize=(8, 2))
+                                colors = ['#4caf50' if r['sentiment'] == 'Positive' else '#f44336']
+                                ax.barh(['Sentiment'], [r['confidence']], color=colors[0])
+                                ax.set_xlim(0, 1)
+                                ax.set_xlabel('Confidence')
+                                st.pyplot(fig)
+                                
                                 with st.expander("📝 Text Details"):
-                                    st.write("**Original Text:**", result['text'])
-                                    st.write("**Preprocessed Text:**", result['preprocessed'])
+                                    st.write("**Original:**", r['text'])
+                                    st.write("**Preprocessed:**", preprocessed)
                             
                             else:
-                                # Multiple results
-                                st.success(f"✅ Processed {len(results)} texts")
-                                
-                                # Summary statistics
+                                # Batch results
                                 positive_count = sum(1 for r in results if r['sentiment'] == 'Positive')
-                                negative_count = len(results) - positive_count
-                                avg_confidence = np.mean([r['confidence'] for r in results])
+                                avg_conf = np.mean([r['confidence'] for r in results])
                                 
                                 col1, col2, col3 = st.columns(3)
-                                col1.metric("Total Texts", len(results))
+                                col1.metric("Total", len(results))
                                 col2.metric("Positive", positive_count, f"{positive_count/len(results):.1%}")
-                                col3.metric("Average Confidence", f"{avg_confidence:.1%}")
+                                col3.metric("Avg Confidence", f"{avg_conf:.1%}")
                                 
                                 # Results table
-                                results_df = pd.DataFrame(results)
-                                results_df = results_df[['text', 'sentiment', 'confidence', 
-                                                         'probability_positive', 'probability_negative']]
-                                results_df.columns = ['Text', 'Sentiment', 'Confidence', 
-                                                     'P(Positive)', 'P(Negative)']
-                                st.dataframe(results_df, use_container_width=True)
+                                df_results = pd.DataFrame(results)
+                                df_results = df_results[['text', 'sentiment', 'confidence']]
+                                st.dataframe(df_results, use_container_width=True)
                                 
-                                # Download results
-                                csv = results_df.to_csv(index=False)
+                                # Download
+                                csv = df_results.to_csv(index=False)
                                 st.download_button(
-                                    label="📥 Download Results as CSV",
-                                    data=csv,
-                                    file_name="sentiment_predictions.csv",
-                                    mime="text/csv"
+                                    "📥 Download CSV",
+                                    csv,
+                                    "predictions.csv",
+                                    "text/csv"
                                 )
                         
                         except Exception as e:
-                            st.error(f"❌ Error during prediction: {str(e)}")
-                            st.exception(e)
+                            st.error(f"❌ Error: {str(e)}")
                 else:
-                    st.warning("⚠️ Please enter some text or upload a file first.")
+                    st.warning("⚠️ Please enter text or upload file")
 
-# Project Capabilities Page
-elif page == "📈 Project Capabilities":
-    st.header("📈 Project Capabilities")
+# Model Information Page
+elif page == "🤖 Models":
+    st.header("🤖 Available Models")
+    
+    if not models:
+        st.error("❌ Models not loaded")
+    else:
+        # Model info
+        model_info = [
+            {
+                "name": "Logistic Regression",
+                "desc": "Linear baseline model, fast and interpretable",
+                "metrics": {"F1": "~68%", "ROC-AUC": "~72%", "Speed": "Very Fast"},
+                "available": "logistic_regression" in models
+            },
+            {
+                "name": "Naive Bayes",
+                "desc": "Probabilistic classifier, efficient for text",
+                "metrics": {"F1": "~70%", "ROC-AUC": "~75%", "Speed": "Very Fast"},
+                "available": "naive_bayes" in models
+            },
+            {
+                "name": "MLP",
+                "desc": "Neural network with hidden layers",
+                "metrics": {"F1": "~72%", "ROC-AUC": "~78%", "Speed": "Medium"},
+                "available": "mlp" in models
+            },
+            {
+                "name": "BERT (DistilBERT)",
+                "desc": "Lightweight transformer, state-of-the-art",
+                "metrics": {"F1": "~85%", "ROC-AUC": "~90%", "Speed": "Slow"},
+                "available": "bert" in models
+            }
+        ]
+        
+        # Display models in a 2x2 grid using Streamlit native components
+        cols = st.columns(2)
+        for idx, model in enumerate(model_info):
+            with cols[idx % 2]:
+                status = "✅ Available" if model['available'] else "⚠️ Not Available"
+                status_icon = "🟢" if model['available'] else "🔴"
+                
+                # Create a card-like container
+                st.markdown("---")
+                st.markdown(f"### {model['name']}")
+                st.markdown(f"{status_icon} **Status:** {status}")
+                st.markdown(f"*{model['desc']}*")
+                st.markdown("")
+                
+                # Metrics
+                metric_col1, metric_col2 = st.columns(2)
+                with metric_col1:
+                    st.metric("F1-Score", model['metrics']['F1'])
+                with metric_col2:
+                    st.metric("ROC-AUC", model['metrics']['ROC-AUC'])
+                
+                st.metric("Speed", model['metrics']['Speed'])
+                st.markdown("")
+        
+        # Comparison table
+        st.subheader("📊 Model Comparison")
+        comparison = pd.DataFrame({
+            "Model": ["Logistic Regression", "Naive Bayes", "MLP", "BERT"],
+            "F1-Score": ["~68%", "~70%", "~72%", "~85%"],
+            "ROC-AUC": ["~72%", "~75%", "~78%", "~90%"],
+            "Interpretability": ["High", "High", "Medium", "Low"],
+            "Speed": ["Fast", "Very Fast", "Medium", "Slow"]
+        })
+        st.dataframe(comparison, use_container_width=True, hide_index=True)
+
+# Explainability Page
+elif page == "🔍 Explain":
+    st.header("🔍 Model Explainability")
     
     st.markdown("""
-    ## 🎯 Comprehensive Features
-    
-    This project implements a complete Twitter sentiment analysis pipeline with the following capabilities:
+    Understand how models make predictions using SHAP (SHapley Additive exPlanations) values.
     """)
     
-    # Feature sections
-    features = [
-        {
-            "title": "🔧 Comprehensive Text Preprocessing",
-            "items": [
-                "Twitter-specific cleaning (hashtags, mentions, URLs, emojis)",
-                "Advanced tokenization and lemmatization",
-                "Multiple feature extraction methods (TF-IDF, Word2Vec)",
-                "Class imbalance handling with SMOTE"
-            ]
-        },
-        {
-            "title": "🤖 Multiple Model Architectures",
-            "items": [
-                "Traditional ML: Logistic Regression, Random Forest",
-                "Deep Learning: LSTM with Word2Vec embeddings",
-                "Transformer: Fine-tuned BERT model",
-                "Ensemble: Voting classifiers for improved robustness"
-            ]
-        },
-        {
-            "title": "⚖️ Fairness Analysis",
-            "items": [
-                "Protected Attributes: Text length, sentiment intensity, language patterns",
-                "Fairness Metrics: Demographic parity, equalized odds, disparate impact",
-                "Bias Mitigation: Constraint-based optimization, threshold tuning",
-                "Comprehensive Reporting: Automated fairness assessment"
-            ]
-        },
-        {
-            "title": "🛡️ Adversarial Robustness",
-            "items": [
-                "Attack Types: Character/word substitution, typo injection, word order perturbation",
-                "Defense Mechanisms: Ensemble methods, input sanitization, adversarial training",
-                "Robustness Testing: Comprehensive evaluation across multiple attack vectors",
-                "Security Assessment: Automated vulnerability analysis"
-            ]
-        },
-        {
-            "title": "🚀 Production-Ready Code",
-            "items": [
-                "Modular Design: Reusable components and utilities",
-                "Error Handling: Comprehensive exception management",
-                "Logging: Detailed execution tracking",
-                "Documentation: Extensive docstrings and examples"
-            ]
-        }
-    ]
-    
-    for feature in features:
-        with st.expander(feature["title"]):
-            for item in feature["items"]:
-                st.markdown(f"✅ {item}")
-    
-    # Performance metrics
-    st.subheader("📊 Performance Metrics")
-    
-    metrics_data = {
-        "Metric": [
-            "F1-Score",
-            "ROC-AUC",
-            "Disparate Impact Ratio",
-            "Adversarial Accuracy",
-            "Cross-validation Stability"
-        ],
-        "Target": [
-            "> 85%",
-            "> 90%",
-            "< 1.2",
-            "> 75%",
-            "< 5% variance"
-        ],
-        "Achieved": [
-            "✅ ~91% (BERT)",
-            "✅ ~97% (BERT)",
-            "✅ ~1.1",
-            "✅ ~78%",
-            "✅ < 5%"
-        ]
-    }
-    
-    metrics_df = pd.DataFrame(metrics_data)
-    st.dataframe(metrics_df, use_container_width=True, hide_index=True)
-    
-    # Use cases
-    st.subheader("💼 Use Cases")
-    
-    use_cases = [
-        "📱 Social Media Monitoring: Real-time sentiment analysis",
-        "💬 Customer Feedback: Automated sentiment classification",
-        "📈 Market Research: Trend analysis and opinion mining",
-        "🛡️ Content Moderation: Automated content classification"
-    ]
-    
-    for use_case in use_cases:
-        st.markdown(f"- {use_case}")
+    if not models:
+        st.error("❌ Models not loaded")
+    else:
+        explain_type = st.radio(
+            "Analysis type:",
+            ["🔍 Explain Prediction", "📈 Feature Importance"]
+        )
+        
+        if explain_type == "🔍 Explain Prediction":
+            explain_text = st.text_area(
+                "Enter text to explain:",
+                height=100,
+                placeholder="Example: I love this product!"
+            )
+            
+            # Get available models for explanation (MLP excluded as it requires SHAP)
+            explain_models = []
+            explain_model_map = {}
+            if "logistic_regression" in models:
+                explain_models.append("Logistic Regression")
+                explain_model_map["Logistic Regression"] = "logistic_regression"
+            if "naive_bayes" in models:
+                explain_models.append("Naive Bayes")
+                explain_model_map["Naive Bayes"] = "naive_bayes"
+            
+            if not explain_models:
+                st.warning("⚠️ No models available for explanation")
+            else:
+                model_choice = st.selectbox("Select model:", explain_models)
+                
+                if st.button("🔍 Explain", type="primary"):
+                    if explain_text:
+                        try:
+                            model_key = explain_model_map.get(model_choice)
+                            if not model_key or model_key not in models:
+                                st.error("Model not available")
+                            else:
+                                # Preprocess and predict
+                                preprocessed = models['preprocessor'].preprocess_pipeline(explain_text)
+                                text_vector = models['tfidf_vectorizer'].transform([preprocessed])
+                                
+                                if model_key in ["logistic_regression", "mlp"] and "scaler" in models:
+                                    text_vector = models['scaler'].transform(text_vector.toarray())
+                                else:
+                                    text_vector = text_vector.toarray()
+                                
+                                model = models[model_key]
+                                prediction = model.predict(text_vector)[0]
+                                probability = model.predict_proba(text_vector)[0]
+                                
+                                sentiment = 'Positive' if prediction == 1 else 'Negative'
+                                
+                                st.subheader("📊 Prediction")
+                                col1, col2 = st.columns(2)
+                                col1.metric("Sentiment", sentiment)
+                                col2.metric("Confidence", f"{max(probability):.1%}")
+                                
+                                # Feature contributions
+                                st.subheader("🔍 Top Contributing Features")
+                                
+                                if model_choice == "Logistic Regression":
+                                    coefficients = model.coef_[0]
+                                    feature_names = models['tfidf_vectorizer'].get_feature_names_out()
+                                    feature_values = text_vector[0]
+                                    contributions = coefficients * feature_values
+                                    top_indices = np.argsort(np.abs(contributions))[-15:][::-1]
+                                    
+                                    contrib_df = pd.DataFrame({
+                                        'Feature': [feature_names[i] for i in top_indices],
+                                        'Contribution': [contributions[i] for i in top_indices]
+                                    })
+                                    st.dataframe(contrib_df, use_container_width=True)
+                                    
+                                    # Visualize
+                                    fig, ax = plt.subplots(figsize=(10, 6))
+                                    colors = ['green' if x > 0 else 'red' for x in contrib_df['Contribution']]
+                                    ax.barh(range(len(contrib_df)), contrib_df['Contribution'], color=colors)
+                                    ax.set_yticks(range(len(contrib_df)))
+                                    ax.set_yticklabels(contrib_df['Feature'])
+                                    ax.set_xlabel('Contribution')
+                                    ax.set_title('Feature Contributions')
+                                    ax.invert_yaxis()
+                                    st.pyplot(fig)
+                                
+                                elif model_choice == "Naive Bayes":
+                                    feature_names = models['tfidf_vectorizer'].get_feature_names_out()
+                                    feature_log_probs = model.feature_log_prob_[1] - model.feature_log_prob_[0]
+                                    feature_values = text_vector[0]
+                                    contributions = feature_log_probs * feature_values
+                                    top_indices = np.argsort(np.abs(contributions))[-15:][::-1]
+                                    
+                                    contrib_df = pd.DataFrame({
+                                        'Feature': [feature_names[i] for i in top_indices],
+                                        'Contribution': [contributions[i] for i in top_indices]
+                                    })
+                                    st.dataframe(contrib_df, use_container_width=True)
+                                    
+                                    # Visualize
+                                    fig, ax = plt.subplots(figsize=(10, 6))
+                                    colors = ['green' if x > 0 else 'red' for x in contrib_df['Contribution']]
+                                    ax.barh(range(len(contrib_df)), contrib_df['Contribution'], color=colors)
+                                    ax.set_yticks(range(len(contrib_df)))
+                                    ax.set_yticklabels(contrib_df['Feature'])
+                                    ax.set_xlabel('Log Probability Contribution')
+                                    ax.set_title('Feature Contributions (Naive Bayes)')
+                                    ax.invert_yaxis()
+                                    st.pyplot(fig)
+                                
+                        
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+                    else:
+                        st.warning("⚠️ Please enter text")
+        
+        else:
+            st.subheader("📈 Global Feature Importance")
+            st.info("""
+            Feature importance shows which words/terms are most important for model predictions.
+            """)
+            
+            # Check for SHAP plots
+            shap_plots = {
+                "Logistic Regression": "reports/figures/shap_summary_lr.png",
+                "Naive Bayes": "reports/figures/shap_summary_nb.png"
+            }
+            
+            selected_plot = st.selectbox("Select model:", list(shap_plots.keys()))
+            plot_path = Path(shap_plots[selected_plot])
+            
+            if plot_path.exists():
+                st.image(str(plot_path), caption=f"SHAP Summary - {selected_plot}")
+            else:
+                st.warning("⚠️ Plot not found. Run the explainability notebook to generate plots.")
+                st.info("💡 Run `notebooks/05_explainability.ipynb` to generate visualizations.")
+            
+            # About SHAP
+            with st.expander("ℹ️ About SHAP Values"):
+                st.markdown("""
+                **SHAP (SHapley Additive exPlanations)** explains model predictions:
+                - Shows contribution of each feature to a prediction
+                - Positive values push toward positive sentiment
+                - Negative values push toward negative sentiment
+                - Magnitude indicates strength of contribution
+                """)
 
 # Footer
 st.markdown("---")
 st.markdown(
     """
-    <div style="text-align: center; color: #666; padding: 2rem;">
+    <div style="text-align: center; color: #666; padding: 1rem;">
         <p>Twitter Sentiment Analysis System | Built with Streamlit</p>
-        <p>For educational and research purposes</p>
     </div>
     """,
     unsafe_allow_html=True
 )
-

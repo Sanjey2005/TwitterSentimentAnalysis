@@ -234,13 +234,14 @@ class ClassBalancer:
         return X_balanced, y_balanced
 
 
-def load_sentiment140_data(file_path, sample_size=None):
+def load_sentiment140_data(file_path, sample_size=None, balanced=True):
     """
     Load Sentiment140 dataset
     
     Args:
         file_path (str): Path to the CSV file
         sample_size (int, optional): Number of samples to load for faster processing
+        balanced (bool): If True and sample_size is specified, ensures equal samples from each class
     
     Returns:
         pd.DataFrame: Loaded dataset
@@ -248,9 +249,73 @@ def load_sentiment140_data(file_path, sample_size=None):
     columns = ['sentiment', 'tweet_id', 'date', 'query', 'username', 'tweet_text']
     
     if sample_size:
-        df = pd.read_csv(file_path, header=None, names=columns, nrows=sample_size)
+        if balanced:
+            # Load balanced sample: equal number from each class
+            samples_per_class = sample_size // 2
+            
+            # Read file in chunks and collect balanced samples
+            negative_samples = []
+            positive_samples = []
+            negative_count = 0
+            positive_count = 0
+            chunk_size = 10000  # Read in chunks for efficiency
+            
+            print(f"Loading balanced sample: {samples_per_class:,} from each class...")
+            
+            for chunk in pd.read_csv(
+                file_path, 
+                header=None, 
+                names=columns,
+                chunksize=chunk_size,
+                encoding='latin-1'
+            ):
+                # Collect negative samples (sentiment = 0)
+                if negative_count < samples_per_class:
+                    neg_chunk = chunk[chunk['sentiment'] == 0]
+                    needed = samples_per_class - negative_count
+                    neg_selected = neg_chunk.head(needed)
+                    if len(neg_selected) > 0:
+                        negative_samples.append(neg_selected)
+                        negative_count += len(neg_selected)
+                
+                # Collect positive samples (sentiment = 4)
+                if positive_count < samples_per_class:
+                    pos_chunk = chunk[chunk['sentiment'] == 4]
+                    needed = samples_per_class - positive_count
+                    pos_selected = pos_chunk.head(needed)
+                    if len(pos_selected) > 0:
+                        positive_samples.append(pos_selected)
+                        positive_count += len(pos_selected)
+                
+                # Stop if we have enough samples from both classes
+                if negative_count >= samples_per_class and positive_count >= samples_per_class:
+                    break
+            
+            # Combine samples
+            df_negative = pd.concat(negative_samples, ignore_index=True).head(samples_per_class) if negative_samples else pd.DataFrame()
+            df_positive = pd.concat(positive_samples, ignore_index=True).head(samples_per_class) if positive_samples else pd.DataFrame()
+            
+            # Combine and shuffle
+            df = pd.concat([df_negative, df_positive], ignore_index=True)
+            df = df.sample(frac=1, random_state=42).reset_index(drop=True)
+            
+            print(f"Loaded {len(df_negative):,} negative and {len(df_positive):,} positive samples")
+        else:
+            # Simple sequential sampling
+            df = pd.read_csv(
+                file_path, 
+                header=None, 
+                names=columns, 
+                nrows=sample_size,
+                encoding='latin-1'
+            )
     else:
-        df = pd.read_csv(file_path, header=None, names=columns)
+        df = pd.read_csv(
+            file_path, 
+            header=None, 
+            names=columns,
+            encoding='latin-1'
+        )
     
     # Convert sentiment labels
     sentiment_mapping = {0: 'Negative', 4: 'Positive'}
