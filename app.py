@@ -485,7 +485,7 @@ elif page == "🔍 Explain":
     else:
         explain_type = st.radio(
             "Analysis type:",
-            ["🔍 Explain Prediction", "📈 Feature Importance"]
+            ["🔍 Explain Prediction"]
         )
         
         if explain_type == "🔍 Explain Prediction":
